@@ -1,5 +1,3 @@
-open Base
-open Stdio
 open Ppxlib
 open Ast_builder.Default
 
@@ -7,6 +5,10 @@ module Filename = Stdlib.Filename
 module Env = Interpreter.Env
 module Value = Interpreter.Value
 
+module In_channel = struct
+  include In_channel
+  let create = open_text
+end
 
 module Of_item = struct
   (* boilerplate code to pull extensions out of different ast nodes *)
@@ -120,7 +122,7 @@ end = struct
       with exn ->
         let msg = match exn with
           | Sys_error msg -> msg
-          | _ -> Exn.to_string exn
+          | _ -> Printexc.to_string exn
         in
         Location.raise_errorf ~loc "optcomp: cannot open imported file: %s: %s" fpath msg
     in
@@ -132,9 +134,9 @@ end = struct
 
   let unroll (stack : 'a Token.t list) : ('a Token.t * 'a Token.t list) =
     let bs, _, rest_rev =
-      List.fold stack ~init:([], false, []) ~f:(fun (bs, found, rest) x ->
+      ListLabels.fold_left stack ~init:([], false, []) ~f:(fun (bs, found, rest) x ->
         match x, found with
-        | Block b, false -> b @ bs, false, rest
+        | Token.Block b, false -> b @ bs, false, rest
         | _ -> bs, true, x :: rest
       )
     in
@@ -144,7 +146,7 @@ end = struct
     fun items ~of_item ->
     let of_items_st x = of_items ~of_item:Of_item.structure x in
     let tokens_rev =
-      List.fold items ~init:[] ~f:(fun acc item ->
+      ListLabels.fold_left items ~init:[] ~f:(fun acc item ->
         match of_item item with
         | Directive (dir, loc, payload) as token ->
           let last_block, rest = unroll acc in
@@ -216,7 +218,7 @@ end = struct
 
   let unroll_exn ~loc (acc:'a temp_ast list) : ('a t * 'a partial_if * 'a temp_ast list) =
     (* split by first EmptyIf/PartialIf *)
-    let pre, if_fun, post = List.fold acc ~init:([], None, []) ~f:(
+    let pre, if_fun, post = ListLabels.fold_left acc ~init:([], None, []) ~f:(
       fun (pre, found, post) x ->
         match found with
         | Some _ -> pre, found, x::post
@@ -233,7 +235,7 @@ end = struct
 
   let of_tokens (tokens: 'a Token.t list) : ('a t) =
     let pre_parsed =
-      List.fold tokens ~init:([] : 'a temp_ast list) ~f:(fun acc token ->
+      ListLabels.fold_left tokens ~init:([] : 'a temp_ast list) ~f:(fun acc token ->
         match token with
         | Token.Block [] -> acc
         | Token.Block b -> Full (Leaf b) :: acc
@@ -289,11 +291,11 @@ end = struct
       | Full x -> x
       | Partial { loc; _ } -> Location.raise_errorf ~loc "optcomp: unterminated if"
     in
-    Block (List.rev_map pre_parsed ~f:extract_full)
+    Block (ListLabels.rev_map pre_parsed ~f:extract_full)
 
   let eval ~drop_item ~eval_item ~env ast =
     let rec drop ast = match ast with
-      | Leaf l -> List.iter l ~f:drop_item
+      | Leaf l -> ListLabels.iter l ~f:drop_item
       | Block (ast::asts) -> drop ast; drop (Block asts)
       | If (cond, ast1, ast2) -> begin
           Attribute.explicitly_drop#expression cond;
@@ -305,7 +307,7 @@ end = struct
     let rec aux_eval ~env (ast : 'a t) : (Env.t * 'a list list) =
       match ast with
       | Leaf l ->
-        let l' = List.map l ~f:(eval_item env) in
+        let l' = ListLabels.map l ~f:(eval_item env) in
         env, [l']
       | Block (ast::asts) ->
         let (new_env, res) = aux_eval ~env ast in
@@ -332,7 +334,7 @@ end = struct
             [Nolabel, ({ pexp_desc = Pexp_ident { txt = Lident i1; loc }; _ } as expr)]
           ),
             Block (Define ({ txt = i2; _}, None) :: _)
-            when String.(=) i1 i2 ->
+            when String.(equal) i1 i2 ->
             make_apply_fun ~loc "not_defined_permissive" expr
           | _ -> cond
         in
@@ -351,12 +353,12 @@ end = struct
         env, []
     in
     let new_env, res = aux_eval ~env ast in
-    (new_env, List.join res)
+    (new_env, List.concat res)
 
   let attr_mapper ~to_loc ~to_attrs ~replace_attrs ~env item =
     let loc = to_loc item in
     let is_our_attribute { attr_name = { txt; _}; _ } = Token.Directive.matches txt ~expected:"if" in
-    let our_as, other_as = List.partition_tf (to_attrs item) ~f:is_our_attribute in
+    let our_as, other_as = List.partition is_our_attribute (to_attrs item)  in
     match our_as with
     | [] -> Some item
     | [{ attr_name = { loc; _}; attr_payload = payload; attr_loc = _; } as our_a] ->
@@ -425,7 +427,7 @@ let map =
               ~to_attrs:(fun c -> c.pcd_attributes)
               ~replace_attrs:(fun c attrs -> {c with pcd_attributes = attrs})
           in
-          let filtered_cs = List.filter_map cs ~f in
+          let filtered_cs = ListLabels.filter_map cs ~f in
           Ptype_variant filtered_cs
         | _ -> x
       in
@@ -442,9 +444,9 @@ let map =
       in
       let x =
         match x with
-        | Pexp_function cs -> Pexp_function (List.filter_map cs ~f)
-        | Pexp_match (e, cs) -> Pexp_match (super#expression env e, List.filter_map cs ~f)
-        | Pexp_try (e, cs) -> Pexp_try (super#expression env e, List.filter_map cs ~f)
+        | Pexp_function cs -> Pexp_function (ListLabels.filter_map cs ~f)
+        | Pexp_match (e, cs) -> Pexp_match (super#expression env e, ListLabels.filter_map cs ~f)
+        | Pexp_try (e, cs) -> Pexp_try (super#expression env e, ListLabels.filter_map cs ~f)
         | _ -> x
       in
       super#expression_desc env x

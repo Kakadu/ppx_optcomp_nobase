@@ -1,9 +1,17 @@
-open Base
 open Ppxlib
 open Ast_builder.Default
 
 module Filename = Stdlib.Filename
 module Parsing  = Stdlib.Parsing
+
+module Char = struct
+  include Char
+  (* From https://github.com/janestreet/base/blob/master/src/char0.ml  *)
+  let to_int = code
+  let int_is_ok i = 0 <= i && i <= 255
+  let unsafe_of_int = Stdlib.Char.unsafe_chr
+  let of_int i =  if int_is_ok i then Some (unsafe_of_int i) else None
+end
 
 module Type = struct
   type t =
@@ -20,7 +28,7 @@ module Type = struct
     | Int     -> "int"
     | Char    -> "char"
     | String  -> "string"
-    | Tuple l -> "(" ^ String.concat ~sep:" * " (List.map l ~f:to_string) ^ ")"
+    | Tuple l -> "(" ^ StringLabels.concat ~sep:" * " (List.map to_string l) ^ ")"
 end
 
 module Value = struct
@@ -43,7 +51,7 @@ module Value = struct
   let config_bool name =
     Bool
       (Ocaml_common.Config.config_var name
-       |> Option.map ~f:Bool.of_string
+       |> Stdppx.Option.map ~f:bool_of_string
        |> Option.value ~default:false)
   ;;
 
@@ -55,7 +63,7 @@ module Value = struct
   let host_is_i386 =
     Bool
       (Ocaml_common.Config.config_var "architecture"
-       |> Option.map ~f:(fun arch -> String.equal arch "i386")
+       |> Stdppx.Option.map ~f:(fun arch -> String.equal arch "i386")
        |> Option.value ~default:false)
 
   let rec to_expression loc t =
@@ -66,7 +74,7 @@ module Value = struct
     | String x   -> estring ~loc x
     | Tuple  []  -> eunit   ~loc
     | Tuple  [x] -> to_expression loc x
-    | Tuple  l   -> pexp_tuple ~loc (List.map l ~f:(to_expression loc))
+    | Tuple  l   -> pexp_tuple ~loc (List.map (to_expression loc) l)
   ;;
 
   let rec to_pattern loc t =
@@ -77,7 +85,7 @@ module Value = struct
     | String x   -> pstring ~loc x
     | Tuple  []  -> punit   ~loc
     | Tuple  [x] -> to_pattern loc x
-    | Tuple  l   -> ppat_tuple ~loc (List.map l ~f:(to_pattern loc))
+    | Tuple  l   -> ppat_tuple ~loc (List.map (to_pattern loc) l)
   ;;
 
   let to_string_pretty v =
@@ -100,7 +108,7 @@ module Value = struct
       | Tuple (x :: l) ->
         Buffer.add_char buf '(';
         aux x;
-        List.iter l ~f:(fun x ->
+        ListLabels.iter l ~f:(fun x ->
           Buffer.add_string buf ", ";
           aux x);
         Buffer.add_char buf ')'
@@ -114,7 +122,7 @@ module Value = struct
     | Int    _ -> Int
     | Char   _ -> Char
     | String _ -> String
-    | Tuple  l -> Tuple (List.map l ~f:type_)
+    | Tuple  l -> Tuple (Stdppx.List.map l ~f:type_)
   ;;
 end
 
@@ -145,13 +153,19 @@ end = struct
     ; state : var_state
     }
 
-  type t = entry Map.M(String).t
+  module SM = struct
+    include Map.Make(String)
+    let to_alist m =
+      to_seq m |> List.of_seq
+  end
 
-  let empty = Map.empty (module String)
+  type t = entry SM.t
+
+  let empty = SM.empty
 
   let to_expression t =
     pexp_apply ~loc:Location.none (evar ~loc:Location.none "env")
-      (List.map (Map.to_alist t) ~f:(fun (var, { loc; state }) ->
+      (ListLabels.map (SM.to_alist t) ~f:(fun (var, { loc; state }) ->
          (Labelled var,
           match state with
           | Defined v -> pexp_construct ~loc { txt = Lident "Defined"; loc }
@@ -159,17 +173,17 @@ end = struct
           | Undefined -> pexp_construct ~loc { txt = Lident "Undefined"; loc }
                            None)))
 
-  let seen t (var : _ Loc.t) = Map.mem t var.txt
+  let seen t (var : _ Loc.t) = SM.mem var.txt t
 
   let add t ~(var:_ Loc.t) ~value =
-    Map.set t ~key:var.txt ~data:{ loc = var.loc; state = Defined value }
+    SM.update var.txt (fun _ -> Some { loc = var.loc; state = Defined value }) t
   ;;
 
   let undefine t (var : _ Loc.t) =
-    Map.set t ~key:var.txt ~data:{ loc = var.loc; state = Undefined }
+    SM.update var.txt (fun _ -> Some { loc = var.loc; state = Undefined }) t
   ;;
 
-  let of_list l = List.fold_left l ~init:empty ~f:(fun acc (var, value) ->
+  let of_list l = ListLabels.fold_left l ~init:empty ~f:(fun acc (var, value) ->
     add acc ~var ~value)
   ;;
 
@@ -202,7 +216,7 @@ end = struct
   ;;
 
   let eval (t : t) (var:string Loc.t) =
-    match Map.find t var.txt with
+    match SM.find_opt var.txt t with
     | Some { state = Defined v; loc = _  } -> v
     | Some { state = Undefined; loc      } ->
       Location.raise_errorf ~loc:var.loc "optcomp: %s is undefined (undefined at %s)"
@@ -212,7 +226,7 @@ end = struct
   ;;
 
   let is_defined ?(permissive=false) (t : t) (var:string Loc.t) =
-    match Map.find t var.txt with
+    match SM.find_opt var.txt t with
     | Some { state = Defined _; _ } -> true
     | Some { state = Undefined; _ } -> false
     | None -> if permissive then false else
@@ -236,7 +250,7 @@ let invalid_type loc expected real =
 
 let var_of_lid (id : _ Located.t) =
   match Longident.flatten_exn id.txt with
-  | l -> { id with txt = String.concat ~sep:"." l }
+  | l -> { id with txt = StringLabels.concat ~sep:"." l }
   | exception _ ->
     Location.raise_errorf ~loc:id.loc "optcomp: invalid variable name"
 ;;
@@ -267,9 +281,9 @@ let not_supported e =
 ;;
 
 let parse_int loc x =
-  match Int.of_string x with
-  | v -> v
-  | exception _ ->
+  match int_of_string_opt x with
+  | Some v -> v
+  | None ->
     Location.raise_errorf ~loc "optcomp: invalid integer"
 ;;
 
@@ -284,24 +298,24 @@ let rec eval env e : Value.t =
   | Pexp_construct ({ txt = Lident "false"; _ }, None) -> Bool false
   | Pexp_construct ({ txt = Lident "()"   ; _ }, None) -> Tuple []
 
-  | Pexp_tuple l -> Tuple (List.map l ~f:(eval env))
+  | Pexp_tuple l -> Tuple (ListLabels.map l ~f:(eval env))
 
   | Pexp_ident id | Pexp_construct (id, None) ->
     Env.eval env (var_of_lid id)
 
   | Pexp_apply ({ pexp_desc = Pexp_ident { txt = Lident s; _ }; _ }, args) -> begin
       let args =
-        List.map args ~f:(fun (l, x) -> match l with Nolabel -> x | _ -> not_supported e)
+        ListLabels.map args ~f:(fun (l, x) -> match l with Nolabel -> x | _ -> not_supported e)
       in
       match s, args with
-      | "="  , [x; y] -> eval_cmp     env Poly.( = )   x y
-      | "<"  , [x; y] -> eval_cmp     env Poly.( < )   x y
-      | ">"  , [x; y] -> eval_cmp     env Poly.( > )   x y
-      | "<=" , [x; y] -> eval_cmp     env Poly.( <= )  x y
-      | ">=" , [x; y] -> eval_cmp     env Poly.( >= )  x y
-      | "<>" , [x; y] -> eval_cmp     env Poly.( <> )  x y
-      | "min", [x; y] -> eval_poly2   env Poly.min     x y
-      | "max", [x; y] -> eval_poly2   env Poly.max     x y
+      | "="  , [x; y] -> eval_cmp     env Stdlib.( = )   x y
+      | "<"  , [x; y] -> eval_cmp     env Stdlib.( < )   x y
+      | ">"  , [x; y] -> eval_cmp     env Stdlib.( > )   x y
+      | "<=" , [x; y] -> eval_cmp     env Stdlib.( <= )  x y
+      | ">=" , [x; y] -> eval_cmp     env Stdlib.( >= )  x y
+      | "<>" , [x; y] -> eval_cmp     env Stdlib.( <> )  x y
+      | "min", [x; y] -> eval_poly2   env Stdlib.min     x y
+      | "max", [x; y] -> eval_poly2   env Stdlib.max     x y
       | "+"  , [x; y] -> eval_int2    env ( + )   x y
       | "-"  , [x; y] -> eval_int2    env ( - )   x y
       | "*"  , [x; y] -> eval_int2    env ( * )   x y
@@ -318,14 +332,14 @@ let rec eval env e : Value.t =
       | "to_int", [x] ->
         Int
           (match eval env x with
-           | String x -> convert_from_string loc "int" Int.of_string x
+           | String x -> convert_from_string loc "int" int_of_string x
            | Int    x -> x
            | Char   x -> Char.to_int x
            | Bool _ | Tuple _ as x -> cannot_convert loc "int" x)
       | "to_bool", [x] ->
         Bool
           (match eval env x with
-           | String x -> convert_from_string loc "bool" Bool.of_string x
+           | String x -> convert_from_string loc "bool" bool_of_string x
            | Bool   x -> x
            | Int _ | Char _ | Tuple _ as x -> cannot_convert loc "bool" x)
       | "to_char", [x] ->
@@ -360,7 +374,7 @@ let rec eval env e : Value.t =
   (* Let-binding *)
   | Pexp_let (Nonrecursive, vbs, e) ->
     let env =
-      List.fold_left vbs ~init:env ~f:(fun new_env vb ->
+      ListLabels.fold_left vbs ~init:env ~f:(fun new_env vb ->
         let v = eval env vb.pvb_expr in
         do_bind new_env vb.pvb_pat v)
     in
@@ -426,7 +440,7 @@ and do_bind env patt value =
 and eval_same env ex ey =
   let vx = eval env ex and vy = eval env ey in
   let tx = Value.type_ vx and ty = Value.type_ vy in
-  if Poly.equal tx ty then
+  if Stdlib.(=) tx ty then
     (vx, vy)
   else
     invalid_type ey.pexp_loc tx ty
@@ -488,7 +502,7 @@ module EnvIO = struct
       expr.pexp_loc
       expr
       (fun args ->
-         List.fold args ~init:Env.empty ~f:(fun env arg ->
+         ListLabels.fold_left args ~init:Env.empty ~f:(fun env arg ->
            match arg with
            | Labelled var, { pexp_desc = Pexp_construct ({txt=Lident "Defined"; _},
                                                          Some e)
