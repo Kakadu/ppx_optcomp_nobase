@@ -1,6 +1,6 @@
 (library
  (name ppx_optcomp)
  (public_name ppx_optcomp)
- (libraries compiler-libs.common base ppxlib stdio)
+ (libraries compiler-libs.common ppxlib stdio)
  (kind ppx_deriver)
  (preprocess no_preprocessing))

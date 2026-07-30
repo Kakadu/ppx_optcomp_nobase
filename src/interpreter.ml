@@ -1,8 +1,15 @@
-open Base
 open Ppxlib
 open Ast_builder.Default
 module Filename = Stdlib.Filename
 module Parsing = Stdlib.Parsing
+
+module String_map = Map.Make(String)
+
+let bool_of_string s =
+  if s = "true" then true
+  else if s = "false" then false
+  else raise (Invalid_argument s)
+;;
 
 module Type = struct
   type t =
@@ -19,7 +26,7 @@ module Type = struct
     | Int -> "int"
     | Char -> "char"
     | String -> "string"
-    | Tuple l -> "(" ^ String.concat ~sep:" * " (Stdlib.List.map to_string l) ^ ")"
+    | Tuple l -> "(" ^ String.concat " * " (Stdlib.List.map to_string l) ^ ")"
   ;;
 end
 
@@ -41,7 +48,7 @@ module Value = struct
   let config_bool name =
     Bool
       (Ocaml_common.Config.config_var name
-       |> Option.map ~f:Bool.of_string
+       |> Option.map bool_of_string
        |> Option.value ~default:false)
   ;;
 
@@ -52,7 +59,7 @@ module Value = struct
   let host_is_i386 =
     Bool
       (Ocaml_common.Config.config_var "architecture"
-       |> Option.map ~f:(fun arch -> String.equal arch "i386")
+       |> Option.map (fun arch -> arch = "i386")
        |> Option.value ~default:false)
   ;;
 
@@ -86,8 +93,8 @@ module Value = struct
   let to_string v =
     let buf = Buffer.create 128 in
     let rec aux = function
-      | Bool b -> Buffer.add_string buf (Bool.to_string b)
-      | Int n -> Buffer.add_string buf (Int.to_string n)
+      | Bool b -> Buffer.add_string buf (string_of_bool b)
+      | Int n -> Buffer.add_string buf (string_of_int n)
       | Char ch -> Buffer.add_char buf ch
       | String s -> Buffer.add_string buf s
       | Tuple [] -> Buffer.add_string buf "()"
@@ -134,9 +141,9 @@ end = struct
     ; state : var_state
     }
 
-  type t = entry Map.M(String).t
+  type t = entry String_map.t
 
-  let empty = Map.empty (module String)
+  let empty = String_map.empty
 
   let to_expression t =
     pexp_apply
@@ -150,17 +157,17 @@ end = struct
                ~loc
                { txt = Lident "Defined"; loc }
                (Some (Value.to_expression loc v))
-           | Undefined -> pexp_construct ~loc { txt = Lident "Undefined"; loc } None )) (Map.to_alist t))
+           | Undefined -> pexp_construct ~loc { txt = Lident "Undefined"; loc } None )) (String_map.bindings t))
   ;;
 
-  let seen t (var : _ Loc.t) = Map.mem t var.txt
+  let seen t (var : _ Loc.t) = String_map.mem var.txt t
 
   let add t ~(var : _ Loc.t) ~value =
-    Map.set t ~key:var.txt ~data:{ loc = var.loc; state = Defined value }
+    String_map.add var.txt { loc = var.loc; state = Defined value } t
   ;;
 
   let undefine t (var : _ Loc.t) =
-    Map.set t ~key:var.txt ~data:{ loc = var.loc; state = Undefined }
+    String_map.add var.txt { loc = var.loc; state = Undefined } t
   ;;
 
   let of_list l =
@@ -183,7 +190,7 @@ end = struct
   ;;
 
   let eval (t : t) (var : string Loc.t) =
-    match Map.find t var.txt with
+    match String_map.find_opt var.txt t with
     | Some { state = Defined v; loc = _ } -> v
     | Some { state = Undefined; loc } ->
       Location.raise_errorf
@@ -195,7 +202,7 @@ end = struct
   ;;
 
   let is_defined ?(permissive = false) (t : t) (var : string Loc.t) =
-    match Map.find t var.txt with
+    match String_map.find_opt var.txt t with
     | Some { state = Defined _; _ } -> true
     | Some { state = Undefined; _ } -> false
     | None ->
@@ -223,10 +230,14 @@ let invalid_type loc expected real =
     (Type.to_string expected)
 ;;
 
-let var_of_lid (id : _ Located.t) =
-  match Longident.flatten_exn id.txt with
-  | l -> { id with txt = String.concat ~sep:"." l }
-  | exception _ -> Location.raise_errorf ~loc:id.loc "optcomp: invalid variable name"
+let rec flatten_longident = function
+  | Longident.Lident s -> [ s ]
+  | Longident.Ldot (t, s) -> flatten_longident t @ [ s ]
+  | Longident.Lapply (t1, t2) -> flatten_longident t1 @ flatten_longident t2
+;;
+
+let var_of_lid (id : _ Location.loc) =
+  { id with txt = String.concat "." (flatten_longident id.txt) }
 ;;
 
 let cannot_convert loc dst x =
@@ -253,7 +264,7 @@ let not_supported e =
 ;;
 
 let parse_int loc x =
-  match Int.of_string x with
+  match int_of_string x with
   | v -> v
   | exception _ -> Location.raise_errorf ~loc "optcomp: invalid integer"
 ;;
@@ -277,14 +288,14 @@ let rec eval env e : Value.t =
         | _ -> not_supported e) args
     in
     (match s, args with
-     | "=", [ x; y ] -> eval_cmp env Poly.( = ) x y
-     | "<", [ x; y ] -> eval_cmp env Poly.( < ) x y
-     | ">", [ x; y ] -> eval_cmp env Poly.( > ) x y
-     | "<=", [ x; y ] -> eval_cmp env Poly.( <= ) x y
-     | ">=", [ x; y ] -> eval_cmp env Poly.( >= ) x y
-     | "<>", [ x; y ] -> eval_cmp env Poly.( <> ) x y
-     | "min", [ x; y ] -> eval_poly2 env Poly.min x y
-     | "max", [ x; y ] -> eval_poly2 env Poly.max x y
+     | "=", [ x; y ] -> eval_cmp env ( = ) x y
+     | "<", [ x; y ] -> eval_cmp env ( < ) x y
+     | ">", [ x; y ] -> eval_cmp env ( > ) x y
+     | "<=", [ x; y ] -> eval_cmp env ( <= ) x y
+     | ">=", [ x; y ] -> eval_cmp env ( >= ) x y
+     | "<>", [ x; y ] -> eval_cmp env ( <> ) x y
+     | "min", [ x; y ] -> eval_poly2 env Stdlib.min x y
+     | "max", [ x; y ] -> eval_poly2 env Stdlib.max x y
      | "+", [ x; y ] -> eval_int2 env ( + ) x y
      | "-", [ x; y ] -> eval_int2 env ( - ) x y
      | "*", [ x; y ] -> eval_int2 env ( * ) x y
@@ -300,14 +311,14 @@ let rec eval env e : Value.t =
      | "to_int", [ x ] ->
        Int
          (match eval env x with
-          | String x -> convert_from_string loc "int" Int.of_string x
+          | String x -> convert_from_string loc "int" int_of_string x
           | Int x -> x
-          | Char x -> Char.to_int x
+          | Char x -> Char.code x
           | (Bool _ | Tuple _) as x -> cannot_convert loc "int" x)
      | "to_bool", [ x ] ->
        Bool
          (match eval env x with
-          | String x -> convert_from_string loc "bool" Bool.of_string x
+          | String x -> convert_from_string loc "bool" bool_of_string x
           | Bool x -> x
           | (Int _ | Char _ | Tuple _) as x -> cannot_convert loc "bool" x)
      | "to_char", [ x ] ->
@@ -323,9 +334,9 @@ let rec eval env e : Value.t =
               x
           | Char x -> x
           | Int x ->
-            (match Char.of_int x with
-             | Some x -> x
-             | None -> Location.raise_errorf ~loc "optcomp: cannot convert %d to char" x)
+            (try Char.chr x with
+             | Invalid_argument _ ->
+               Location.raise_errorf ~loc "optcomp: cannot convert %d to char" x)
           | (Bool _ | Tuple _) as x -> cannot_convert loc "char" x)
      | "show", [ x ] ->
        let v = eval env x in
@@ -374,8 +385,8 @@ and bind env patt value =
   match patt.ppat_desc, value with
   | Ppat_any, _ -> env
   | Ppat_constant (Pconst_integer (x, None)), Int y when parse_int loc x = y -> env
-  | Ppat_constant (Pconst_char x), Char y when Char.equal x y -> env
-  | Ppat_constant (Pconst_string (x, _, _)), String y when String.equal x y -> env
+  | Ppat_constant (Pconst_char x), Char y when x = y -> env
+  | Ppat_constant (Pconst_string (x, _, _)), String y when x = y -> env
   | Ppat_construct ({ txt = Lident "true"; _ }, None), Bool true -> env
   | Ppat_construct ({ txt = Lident "false"; _ }, None), Bool false -> env
   | Ppat_construct ({ txt = Lident "()"; _ }, None), Tuple [] -> env
@@ -399,7 +410,7 @@ and eval_same env ex ey =
   and vy = eval env ey in
   let tx = Value.type_ vx
   and ty = Value.type_ vy in
-  if Poly.equal tx ty then vx, vy else invalid_type ey.pexp_loc tx ty
+  if tx = ty then vx, vy else invalid_type ey.pexp_loc tx ty
 
 and eval_int env e =
   match eval env e with

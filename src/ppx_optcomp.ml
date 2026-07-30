@@ -1,4 +1,3 @@
-open Base
 open Stdio
 open Ppxlib
 open Ast_builder.Default
@@ -142,7 +141,7 @@ end = struct
         let msg =
           match exn with
           | Sys_error msg -> msg
-          | _ -> Exn.to_string exn
+          | _ -> Printexc.to_string exn
         in
         Location.raise_errorf ~loc "optcomp: cannot open imported file: %s: %s" fpath msg
     in
@@ -360,7 +359,7 @@ end = struct
                     , ({ pexp_desc = Pexp_ident { txt = Lident i1; loc }; _ } as expr) )
                   ] )
             , Block (Define ({ txt = i2; _ }, None) :: _) )
-            when String.( = ) i1 i2 -> make_apply_fun ~loc "not_defined_permissive" expr
+            when i1 = i2 -> make_apply_fun ~loc "not_defined_permissive" expr
           | _ -> cond
         in
         (match Interpreter.eval env cond with
