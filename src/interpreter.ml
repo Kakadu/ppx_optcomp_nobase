@@ -19,7 +19,7 @@ module Type = struct
     | Int -> "int"
     | Char -> "char"
     | String -> "string"
-    | Tuple l -> "(" ^ String.concat ~sep:" * " (List.map l ~f:to_string) ^ ")"
+    | Tuple l -> "(" ^ String.concat ~sep:" * " (Stdlib.List.map to_string l) ^ ")"
   ;;
 end
 
@@ -64,7 +64,7 @@ module Value = struct
     | String x -> estring ~loc x
     | Tuple [] -> eunit ~loc
     | Tuple [ x ] -> to_expression loc x
-    | Tuple l -> pexp_tuple ~loc (List.map l ~f:(to_expression loc))
+    | Tuple l -> pexp_tuple ~loc (Stdlib.List.map (to_expression loc) l)
   ;;
 
   let rec to_pattern loc t =
@@ -75,7 +75,7 @@ module Value = struct
     | String x -> pstring ~loc x
     | Tuple [] -> punit ~loc
     | Tuple [ x ] -> to_pattern loc x
-    | Tuple l -> ppat_tuple ~loc (List.map l ~f:(to_pattern loc))
+    | Tuple l -> ppat_tuple ~loc (Stdlib.List.map (to_pattern loc) l)
   ;;
 
   let to_string_pretty v =
@@ -94,9 +94,9 @@ module Value = struct
       | Tuple (x :: l) ->
         Buffer.add_char buf '(';
         aux x;
-        List.iter l ~f:(fun x ->
+        Stdlib.List.iter (fun x ->
           Buffer.add_string buf ", ";
-          aux x);
+          aux x) l;
         Buffer.add_char buf ')'
     in
     aux v;
@@ -108,7 +108,7 @@ module Value = struct
     | Int _ -> Int
     | Char _ -> Char
     | String _ -> String
-    | Tuple l -> Tuple (List.map l ~f:type_)
+    | Tuple l -> Tuple (Stdlib.List.map type_ l)
   ;;
 end
 
@@ -142,7 +142,7 @@ end = struct
     pexp_apply
       ~loc:Location.none
       (evar ~loc:Location.none "env")
-      (List.map (Map.to_alist t) ~f:(fun (var, { loc; state }) ->
+      (Stdlib.List.map (fun (var, { loc; state }) ->
          ( Labelled var
          , match state with
            | Defined v ->
@@ -150,7 +150,7 @@ end = struct
                ~loc
                { txt = Lident "Defined"; loc }
                (Some (Value.to_expression loc v))
-           | Undefined -> pexp_construct ~loc { txt = Lident "Undefined"; loc } None )))
+           | Undefined -> pexp_construct ~loc { txt = Lident "Undefined"; loc } None )) (Map.to_alist t))
   ;;
 
   let seen t (var : _ Loc.t) = Map.mem t var.txt
@@ -164,7 +164,7 @@ end = struct
   ;;
 
   let of_list l =
-    List.fold_left l ~init:empty ~f:(fun acc (var, value) -> add acc ~var ~value)
+    Stdlib.List.fold_left (fun acc (var, value) -> add acc ~var ~value) empty l
   ;;
 
   let init =
@@ -267,14 +267,14 @@ let rec eval env e : Value.t =
   | Pexp_construct ({ txt = Lident "true"; _ }, None) -> Bool true
   | Pexp_construct ({ txt = Lident "false"; _ }, None) -> Bool false
   | Pexp_construct ({ txt = Lident "()"; _ }, None) -> Tuple []
-  | Pexp_tuple l -> Tuple (List.map l ~f:(eval env))
+  | Pexp_tuple l -> Tuple (Stdlib.List.map (eval env) l)
   | Pexp_ident id | Pexp_construct (id, None) -> Env.eval env (var_of_lid id)
   | Pexp_apply ({ pexp_desc = Pexp_ident { txt = Lident s; _ }; _ }, args) ->
     let args =
-      List.map args ~f:(fun (l, x) ->
+      Stdlib.List.map (fun (l, x) ->
         match l with
         | Nolabel -> x
-        | _ -> not_supported e)
+        | _ -> not_supported e) args
     in
     (match s, args with
      | "=", [ x; y ] -> eval_cmp env Poly.( = ) x y
@@ -341,9 +341,9 @@ let rec eval env e : Value.t =
   (* Let-binding *)
   | Pexp_let (Nonrecursive, vbs, e) ->
     let env =
-      List.fold_left vbs ~init:env ~f:(fun new_env vb ->
+      Stdlib.List.fold_left (fun new_env vb ->
         let v = eval env vb.pvb_expr in
-        do_bind new_env vb.pvb_pat v)
+        do_bind new_env vb.pvb_pat v) env vbs
     in
     eval env e
   (* Pattern matching *)
@@ -458,7 +458,7 @@ module EnvIO = struct
       expr.pexp_loc
       expr
       (fun args ->
-        List.fold args ~init:Env.empty ~f:(fun env arg ->
+        Stdlib.List.fold_left (fun env arg ->
           match arg with
           | ( Labelled var
             , { pexp_desc = Pexp_construct ({ txt = Lident "Defined"; _ }, Some e)
@@ -470,6 +470,6 @@ module EnvIO = struct
               ; pexp_loc = loc
               ; _
               } ) -> Env.undefine env { txt = var; loc }
-          | _, e -> Location.raise_errorf ~loc:e.pexp_loc "ppx_optcomp: invalid cookie"))
+          | _, e -> Location.raise_errorf ~loc:e.pexp_loc "ppx_optcomp: invalid cookie") Env.empty args)
   ;;
 end

@@ -106,6 +106,8 @@ module Token_stream : sig
 
   val of_items : 'a list -> of_item:('a -> 'a Token.t) -> 'a t
 end = struct
+  open Token
+
   type 'a t = 'a Token.t list
 
   type ftype =
@@ -153,19 +155,19 @@ end = struct
 
   let unroll (stack : 'a Token.t list) : 'a Token.t * 'a Token.t list =
     let bs, _, rest_rev =
-      List.fold stack ~init:([], false, []) ~f:(fun (bs, found, rest) x ->
+      Stdlib.List.fold_left (fun (bs, found, rest) x ->
         match x, found with
         | Block b, false -> b @ bs, false, rest
-        | _ -> bs, true, x :: rest)
+        | _ -> bs, true, x :: rest) ([], false, []) stack
     in
-    Block bs, List.rev rest_rev
+    Block bs, Stdlib.List.rev rest_rev
   ;;
 
   let rec of_items : 'a. 'a list -> of_item:('a -> 'a Token.t) -> 'a t =
     fun items ~of_item ->
     let of_items_st x = of_items ~of_item:Of_item.structure x in
     let tokens_rev =
-      List.fold items ~init:[] ~f:(fun acc item ->
+      Stdlib.List.fold_left (fun acc item ->
         match of_item item with
         | Directive (dir, loc, payload) as token ->
           let last_block, rest = unroll acc in
@@ -180,14 +182,14 @@ end = struct
                  Token.just_directives_exn ~loc (of_items_st st_items)
              in
              In_channel.close in_ch;
-             List.rev new_tokens @ (last_block :: rest)
+             Stdlib.List.rev new_tokens @ (last_block :: rest)
            | _ -> token :: last_block :: rest)
         | _ ->
           (match acc with
            | Block items :: acc -> Block (items @ [ item ]) :: acc
-           | _ -> Block [ item ] :: acc))
+           | _ -> Block [ item ] :: acc)) [] items
     in
-    List.rev tokens_rev
+    Stdlib.List.rev tokens_rev
   ;;
 end
 
@@ -239,17 +241,17 @@ end = struct
   let unroll_exn ~loc (acc : 'a temp_ast list) : 'a t * 'a partial_if * 'a temp_ast list =
     (* split by first EmptyIf/PartialIf *)
     let pre, if_fun, post =
-      List.fold acc ~init:([], None, []) ~f:(fun (pre, found, post) x ->
+      Stdlib.List.fold_left (fun (pre, found, post) x ->
         match found with
         | Some _ -> pre, found, x :: post
         | None ->
           (match x with
            | Partial { txt = f; _ } -> pre, Some f, post
-           | Full ast -> ast :: pre, None, post))
+           | Full ast -> ast :: pre, None, post)) ([], None, []) acc
     in
     match if_fun with
     | None -> Location.raise_errorf ~loc "optcomp: else/endif/elif outside of if"
-    | Some f -> Block pre, f, List.rev post
+    | Some f -> Block pre, f, Stdlib.List.rev post
   ;;
 
   let make_if ~loc cond =
@@ -259,10 +261,8 @@ end = struct
 
   let of_tokens (tokens : 'a Token.t list) : 'a t =
     let pre_parsed =
-      List.fold
-        tokens
-        ~init:([] : 'a temp_ast list)
-        ~f:(fun acc token ->
+      Stdlib.List.fold_left
+        (fun acc token ->
           match token with
           | Token.Block [] -> acc
           | Token.Block b -> Full (Leaf b) :: acc
@@ -307,18 +307,19 @@ end = struct
                make_if ~loc expr :: acc
              | Elifdef -> deprecated_ifs ~loc
              | Elifndef -> deprecated_ifs ~loc))
+        [] tokens
     in
     let extract_full = function
       | Full x -> x
       | Partial { loc; _ } -> Location.raise_errorf ~loc "optcomp: unterminated if"
     in
-    Block (List.rev_map pre_parsed ~f:extract_full)
+    Block (Stdlib.List.rev_map extract_full pre_parsed)
   ;;
 
   let eval ~drop_item ~eval_item ~env ast =
     let rec drop ast =
       match ast with
-      | Leaf l -> List.iter l ~f:drop_item
+      | Leaf l -> Stdlib.List.iter drop_item l
       | Block (ast :: asts) ->
         drop ast;
         drop (Block asts)
@@ -331,7 +332,7 @@ end = struct
     let rec aux_eval ~env (ast : 'a t) : Env.t * 'a list list =
       match ast with
       | Leaf l ->
-        let l' = List.map l ~f:(eval_item env) in
+        let l' = Stdlib.List.map (eval_item env) l in
         env, [ l' ]
       | Block (ast :: asts) ->
         let new_env, res = aux_eval ~env ast in
@@ -378,7 +379,7 @@ end = struct
         env, []
     in
     let new_env, res = aux_eval ~env ast in
-    new_env, List.join res
+    new_env, Stdlib.List.flatten res
   ;;
 
   let attr_mapper ~to_loc ~to_attrs ~replace_attrs ~env item =
@@ -386,7 +387,7 @@ end = struct
     let is_our_attribute { attr_name = { txt; _ }; _ } =
       Token.Directive.matches txt ~expected:"if"
     in
-    let our_as, other_as = List.partition_tf (to_attrs item) ~f:is_our_attribute in
+    let our_as, other_as = Stdlib.List.partition is_our_attribute (to_attrs item) in
     match our_as with
     | [] -> Some item
     | [ ({ attr_name = { loc; _ }; attr_payload = payload; attr_loc = _ } as our_a) ] ->
@@ -464,7 +465,7 @@ let map =
               ~to_attrs:(fun c -> c.pcd_attributes)
               ~replace_attrs:(fun c attrs -> { c with pcd_attributes = attrs })
           in
-          let filtered_cs = List.filter_map cs ~f in
+          let filtered_cs = Stdlib.List.filter_map f cs in
           Ptype_variant filtered_cs
         | _ -> x
       in
@@ -482,9 +483,9 @@ let map =
       let x =
         match x with
         | Pexp_function (params, constr, Pfunction_cases (cs, loc, attr)) ->
-          Pexp_function (params, constr, Pfunction_cases (List.filter_map cs ~f, loc, attr))
-        | Pexp_match (e, cs) -> Pexp_match (super#expression env e, List.filter_map cs ~f)
-        | Pexp_try (e, cs) -> Pexp_try (super#expression env e, List.filter_map cs ~f)
+          Pexp_function (params, constr, Pfunction_cases (Stdlib.List.filter_map f cs, loc, attr))
+        | Pexp_match (e, cs) -> Pexp_match (super#expression env e, Stdlib.List.filter_map f cs)
+        | Pexp_try (e, cs) -> Pexp_try (super#expression env e, Stdlib.List.filter_map f cs)
         | _ -> x
       in
       super#expression_desc env x

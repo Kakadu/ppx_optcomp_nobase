@@ -54,12 +54,12 @@ let make_directive name loc payload =
 ;;
 
 let just_directives_exn ~loc ls =
-  List.filter_map ls ~f:(fun token ->
+  Stdlib.List.filter_map (fun token ->
     match token with
     | Directive _ as dir -> Some dir
     | Block [] -> None
     | Block _ ->
       Location.raise_errorf
         ~loc
-        "optcomp: only optcomp directives allowed in this context")
+        "optcomp: only optcomp directives allowed in this context") ls
 ;;
