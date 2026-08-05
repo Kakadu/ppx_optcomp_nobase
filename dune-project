@@ -2,6 +2,8 @@
 
 (generate_opam_files true)
 
+(name ppx_optcomp_nobase)
+
 (maintainers "Dmitrii Kosarev a.k.a. Kakadu <kakadu.hafanana@gmail.com>")
 
 (authors "Jane Street Group, LLC")
