@@ -1,30 +1,6 @@
 (library
  (name ppx_optcomp_nobase)
  (public_name ppx_optcomp_nobase)
- (libraries
-  compiler-libs.common
-  ppxlib
-  stdio
-  (select
-   test_select.ml
-   from
-   (fake_lt5 -> test_select.lt5.ml)
-   (fake_ge5 -> test_select.ge5.ml)))
+ (libraries compiler-libs.common ppxlib stdio)
  (kind ppx_deriver)
  (preprocess no_preprocessing))
-
-(library
- (name fake_lt5)
- (package ppx_optcomp_nobase)
- (modules)
- (enabled_if
-  (< %{ocaml_version} "5.0.0"))
- (libraries))
-
-(library
- (name fake_ge5)
- (package ppx_optcomp_nobase)
- (modules)
- (enabled_if
-  (>= %{ocaml_version} "5.0.0"))
- (libraries))

@@ -479,7 +479,14 @@ let map =
           ~replace_attrs:(fun ({ pc_lhs; _ } as c) attrs ->
             { c with pc_lhs = { pc_lhs with ppat_attributes = attrs } })
       in
-      let x = Test_select.wrap ~f ~self:(super#expression env) x in
+      let x =
+        match x with
+        | Pexp_function (params, constr, Pfunction_cases (cs, loc, attr)) ->
+          Pexp_function (params, constr, Pfunction_cases (Stdlib.List.filter_map f cs, loc, attr))
+        | Pexp_match (e, cs) -> Pexp_match (super#expression env e, Stdlib.List.filter_map f cs)
+        | Pexp_try (e, cs) -> Pexp_try (super#expression env e, Stdlib.List.filter_map f cs)
+        | _ -> x
+      in
       super#expression_desc env x
   end
 ;;
