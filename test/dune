@@ -1,4 +1,24 @@
-(library
+(executable
  (name ppx_optcomp_test)
+ (preprocessor_deps
+  "test_imported/order/c.ml"
+  "test_imported/order/cd.ml"
+  "test_imported/order/d.ml"
+  "test_imported/config.h")
  (preprocess
-  (pps ppx_optcomp ppx_inline_test)))
+  (pps ppx_optcomp_nobase)))
+
+(cram
+ (applies_to run)
+ (deps ppx_optcomp_test.exe))
+
+(cram
+ (applies_to bad)
+ (deps
+  bad1.ml
+  bad2.ml
+  test_imported/error/a.ml
+  test_imported/error/b.ml
+  test_imported/error/c.ml
+  ;
+  ))
