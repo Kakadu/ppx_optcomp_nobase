@@ -1,5 +1,5 @@
 opam-version: "2.0"
-version: "v0.17.1"
+version: "0.17.1"
 maintainer: "Dmitrii Kosarev a.k.a. Kakadu <kakadu.hafanana@gmail.com>"
 authors: ["Jane Street Group, LLC"]
 homepage: "https://github.com/janestreet/ppx_optcomp"
