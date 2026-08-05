@@ -2,6 +2,7 @@
 [@@@ocaml.warnerror "-unused-type-declaration"]
 [@@@ocaml.warning "-unused-type-declaration"]
 [@@@ocaml.warnerror "-unused-constructor"]
+[@@@ocaml.warning "-unused-constructor"]
 
 open Printf
 

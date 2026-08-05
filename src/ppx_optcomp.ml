@@ -1,4 +1,3 @@
-open Stdio
 open Ppxlib
 open Ast_builder.Default
 module Filename = Stdlib.Filename
@@ -136,7 +135,7 @@ end = struct
     let filename = Ast_utils.get_string ~loc payload in
     let fpath, ftype = resolve_import ~loc ~filename in
     let in_ch =
-      try In_channel.create fpath with
+      try Stdlib.open_in_gen [ Open_rdonly ] 0o000 fpath with
       | exn ->
         let msg =
           match exn with
