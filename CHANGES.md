@@ -1,3 +1,7 @@
+## 0.17.1
+
+- Remove dependecies to base and stdio and release ppx_optcomp_nobase.0.17.1
+
 ## v0.11
 
 - Completly changed the syntax to make this a proper ppx (and not a -pp as it
